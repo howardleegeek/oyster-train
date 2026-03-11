@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  registration_server:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/deploy/models
+      - ./data:/app/deploy/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  flower_server:
+    # Assuming Flower server from S01 would be here
+    # For now, using a placeholder that just sleeps
+    image: python:3.11-slim
+    command: ["sleep", "infinity"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/app/deploy/models
+      - ./data:/app/deploy/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/dashboard/overview"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  default:
+    name: oyster-train-net
+    driver: bridge
