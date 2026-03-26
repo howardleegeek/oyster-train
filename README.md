@@ -1,226 +1,224 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/PyTorch-2.10+-ee4c2c?logo=pytorch&logoColor=white" alt="PyTorch">
+  <img src="https://img.shields.io/badge/Flower-1.x-3366CC?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9IiMzMzY2Q0MiLz48L3N2Zz4=" alt="Flower">
+  <img src="https://img.shields.io/badge/Android-ARM64-3DDC84?logo=android&logoColor=white" alt="Android">
+  <img src="https://img.shields.io/badge/License-Proprietary-red" alt="License">
+</p>
+
 # Oyster Phone Training Protocol
 
-Federated learning system for training Qwen2.5 on 10,000 Android phones with DiLoCo optimization and gradient compression.
+> **Federated learning on 10,000 phones** — training AI models on-device with privacy-preserving distributed optimization.
 
-## Overview
+Oyster enables two federated training paradigms on Android phones:
 
-Oyster enables privacy-preserving model training on edge devices through:
-- **DiLoCo (Distributed Low-Communication)**: Nesterov momentum optimizer reduces communication rounds
-- **LoRA Adapters**: Efficient fine-tuning with rank-4 adapters
-- **3-Layer Compression**: Top-K sparsification + 1-bit SignSGD achieves >300x compression
-- **Phone-Optimized**: Designed for UBS1 phones (Unisoc T616, 6GB RAM, Mali-G57 GPU)
+| Model | Params | Use Case | Memory | Communication |
+|-------|--------|----------|--------|---------------|
+| **Qwen2.5-1.5B** | 1.5B (LoRA) | Language understanding | ~4GB (INT4) | ~10KB/round |
+| **LeWorldModel** | ~15M (full) | Physical world prediction | ~220MB (FP16) | <200KB/round |
 
-## Architecture
+---
+
+## Core Technology
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Cloud Server                                │
-│  ┌─────────────┐    ┌──────────────────────────────────────┐   │
-│  │  Flower     │───▶│  DiLoCo Strategy                    │   │
-│  │  Server     │    │  - Nesterov momentum (β=0.9, lr=0.7)│   │
-│  │  (gRPC:8080)│    │  - Aggregate compressed LoRA deltas │   │
-│  └─────────────┘    │  - Global model sync                 │   │
-│                     └──────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+                         Cloud Server (DiLoCo)
+                    ┌───────────────────────────┐
+                    │   Flower gRPC :8080        │
+                    │   Nesterov Momentum        │
+                    │   β=0.9, lr=0.7            │
+                    │   Aggregate → Broadcast    │
+                    └─────────┬─────────────────┘
                               │
-                              │ gRPC (2-10KB per update)
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Phone Clients (10,000)                        │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Local Training (500 steps)                             │   │
-│  │  ┌─────────┐   ┌──────────────┐   ┌──────────────────┐  │   │
-│  │  │ Qwen2.5 │──▶│ LoRA(rank=4) │──▶│ Compress & Send │  │   │
-│  │  │ (INT4)  │   │ ┌──┐ ┌──┐   │   │ ┌──────┐ ┌─────┐│  │   │
-│  │  └─────────┘   │ │A │ │B │   │   │ │Top-K │ │Sign ││  │   │
-│  │                │ └──┘ └──┘   │   │ │ 1%   │ │SGD  ││  │   │
-│  │                │ 112 adapters  │   │ └──┬───┘ └──┬──┘│  │   │
-│  │                └──────────────┘   │    │       │   │  │   │
-│  │                                     ▼    ▼       ▼   │  │   │
-│  │                                    3MB → 75KB → 10KB  │  │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+              ┌───────────────┼───────────────┐
+              │               │               │
+         Phone 1         Phone 2    ...  Phone 10,000
+    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+    │ Local Train  │  │ Local Train  │  │ Local Train  │
+    │ 200-500 steps│  │ 200-500 steps│  │ 200-500 steps│
+    │      ↓       │  │      ↓       │  │      ↓       │
+    │ Δ → TopK(1%) │  │ Δ → TopK(1%) │  │ Δ → TopK(1%) │
+    │ → SignSGD    │  │ → SignSGD    │  │ → SignSGD    │
+    │ = >300x comp │  │ = >300x comp │  │ = >300x comp │
+    └─────────────┘  └─────────────┘  └─────────────┘
 ```
+
+### Key Innovations
+
+- **DiLoCo**: Distributed Low-Communication optimizer — clients train locally for hundreds of steps before syncing, reducing communication rounds by 100x
+- **3-Layer Compression**: LoRA delta extraction → Top-K sparsification (1%) → 1-bit SignSGD = **>300x compression** with error feedback
+- **LeWM Integration**: JEPA world model learns physical environment prediction from phone cameras — only 15M parameters, trainable in ~220MB RAM
+
+---
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Install
 
 ```bash
-make install
+python -m venv .venv && source .venv/bin/activate
+pip install flwr torch torchvision transformers peft einops numpy pyyaml msgpack-python
 ```
 
-Or manually:
-```bash
-pip install flwr torch transformers peft numpy pyyaml msgpack-python pytest
-```
-
-### 2. Start Server
+### Run Simulation (Qwen2.5)
 
 ```bash
-make server
-```
+# Terminal 1: Start server
+python server/flower_server.py
 
-Or:
-```bash
-python server/flower_server.py --port 8080 --rounds 100 --min-clients 10
-```
-
-### 3. Run Simulation
-
-```bash
-make sim
-```
-
-Or:
-```bash
+# Terminal 2: Run 10 simulated phone clients
 python simulation/sim_orchestrator.py --clients 10 --rounds 3
 ```
 
-## Configuration
+### Run Simulation (LeWM World Model)
 
-### Model Configuration
+```bash
+# Terminal 1: Start LeWM server
+python server/lewm_server.py simulation
 
-Use `models/qwen25_config.py` for hyperparameter management:
+# Terminal 2: Quick local test
+python -c "
+from models.lewm_config import get_simulation_config
+from models.lewm_loader import load_lewm_model
+import torch
+
+model = load_lewm_model(get_simulation_config())
+pixels = torch.randn(4, 8, 3, 96, 96)
+actions = torch.randn(4, 8, 6)
+out = model(pixels, actions)
+print(f'Loss: {out[\"loss\"].item():.4f}')
+"
+```
+
+---
+
+## Model Configurations
+
+### Qwen2.5 (Language)
 
 ```python
-from models.qwen25_config import get_ubs1_config, get_simulation_config
+from models import get_ubs1_config
 
-# Production config for UBS1 phones
 config = get_ubs1_config()
-# - Qwen2.5-1.5B-Instruct, INT4 quantization
-# - LoRA rank=4, alpha=8
-# - 500 local steps, 100 rounds
-# - Top-K 1% + SignSGD compression
-
-# Testing config (CPU-friendly)
-test_config = get_simulation_config()
-# - Qwen2.5-0.5B-Instruct
-# - 10 local steps, 10 rounds
+# Qwen2.5-1.5B-Instruct, INT4 quantization
+# LoRA rank=4, alpha=8, targets: q/k/v/o_proj
+# 500 local steps, batch=4
 ```
 
-### Server Configuration
-
-Configure via environment variables:
-
-```bash
-export OYSTER_FLOWER_PORT=8080
-export OYSTER_MIN_CLIENTS=10
-export OYSTER_OUTER_LR=0.7
-export OYSTER_OUTER_MOMENTUM=0.9
-```
-
-Or use `ServerConfig`:
+### LeWorldModel (Vision/Physics)
 
 ```python
-from server.config import ServerConfig
+from models import get_lewm_ubs1_config, get_lewm_simulation_config
 
-config = ServerConfig(
-    flower_port=9090,
-    min_clients=5,
-    outer_lr=0.5,
-    outer_momentum=0.9
-)
+# For UBS1 phones (6GB RAM)
+config = get_lewm_ubs1_config()
+# MobileNetV3 encoder, 4-layer predictor
+# ~8M params, ~120MB training memory
+# Camera frames (224×224) + IMU as actions
+
+# For CPU testing
+config = get_lewm_simulation_config()
+# 96×96 images, 2-layer predictor, ~4M params
 ```
 
-## Testing
-
-Run all tests:
-
-```bash
-make test
-```
-
-Or specific test suites:
-
-```bash
-# Compression tests
-pytest tests/test_compression.py -v
-
-# Server tests
-pytest tests/test_server.py -v
-
-# Integration tests
-pytest tests/test_integration.py -v
-```
-
-## Phase Roadmap
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| **PoC** | Tiny model, 5 clients, CPU simulation | ✅ Complete |
-| **Federated** | Real Qwen2.5-1.5B, 100 clients, GPU simulation | 🔨 In Progress |
-| **Scale** | 1,000 clients, multi-server deployment | 📋 Planned |
-| **Deploy** | 10,000 phones, production deployment | 📋 Planned |
+---
 
 ## Project Structure
 
 ```
 oyster-train/
-├── client/              # Real phone client code (TBD)
-├── compression/         # 3-layer gradient compression
-│   ├── lora_extractor.py   # LoRA delta extraction
-│   ├── topk_sparse.py      # Top-K sparsification
-│   ├── signsgd.py          # 1-bit quantization
-│   └── pipeline.py         # End-to-end pipeline
-├── models/              # Model configuration
-│   └── qwen25_config.py    # Pydantic config models
-├── server/              # Flower server
-│   ├── config.py           # Server settings
-│   ├── diloco_strategy.py  # DiLoCo aggregation strategy
-│   └── flower_server.py    # gRPC server entry point
-├── simulation/          # Phone simulation harness
-│   ├── data_loader.py      # Non-IID data shards
-│   ├── sim_client.py       # Simulated phone client
-│   └── sim_orchestrator.py # Simulation runner
-├── tests/               # Test suites
-│   ├── test_compression.py
-│   ├── test_server.py
-│   └── test_integration.py
-├── specs/               # Task specifications
-├── README.md
-└── Makefile
+├── models/                    # Model backends
+│   ├── qwen25_config.py          # Qwen2.5 configuration
+│   ├── qwen25_loader.py          # Qwen2.5 + LoRA loader
+│   ├── lewm_config.py            # LeWM configuration (NEW)
+│   ├── lewm_loader.py            # LeWM JEPA model (NEW)
+│   └── quantization.py           # INT4/INT8/FP16 quantization
+├── server/                    # Flower FL server
+│   ├── diloco_strategy.py        # DiLoCo aggregation strategy
+│   ├── flower_server.py          # Qwen2.5 server
+│   └── lewm_server.py            # LeWM server (NEW)
+├── simulation/                # Phone simulation
+│   ├── sim_client.py             # Qwen2.5 phone client
+│   ├── lewm_client.py            # LeWM phone client (NEW)
+│   └── sim_orchestrator.py       # Simulation runner
+├── compressor/                # Gradient compression
+│   ├── pipeline.py               # End-to-end compression
+│   ├── topk_sparse.py            # Top-K sparsification
+│   ├── signsgd.py                # 1-bit quantization
+│   └── lora_extractor.py         # LoRA delta extraction
+├── client/                    # Real phone clients
+│   ├── android/                  # Android app (Kotlin)
+│   └── qvac/                     # QVAC native build (C++)
+├── deploy/                    # Deployment configs
+├── tests/                     # Test suites
+├── specs/                     # Task specifications
+└── data/                      # Training data configs
 ```
 
-## Key Components
+---
 
-### DiLoCo Strategy
+## Technical Details
 
-The DiLoCo optimizer reduces communication by applying Nesterov momentum on the server side:
+### DiLoCo Outer Optimizer
 
 ```
-v_t = β * v_{t-1} - lr * (grad_t + β * v_{t-1})  # Lookahead gradient
-θ_t = θ_{t-1} - v_t                              # Parameter update
+v_t = β · v_{t-1} - lr · (Δ_t + β · v_{t-1})   # Nesterov lookahead
+θ_t = θ_{t-1} - v_t                               # Global update
 ```
 
-Where:
-- β = 0.9 (momentum coefficient)
-- lr = 0.7 (outer learning rate)
-- grad_t = weighted average of client pseudo-gradients
+### LeWM Architecture (JEPA)
 
-### Compression Pipeline
+Based on [LeWorldModel](https://arxiv.org/abs/2603.19312) (Maes, Le Lidec, Scieur, LeCun, Balestriero 2026):
 
-Each client's update (~3MB) is compressed to 2-10KB:
+```
+Camera Frames → MobileNetV3 Encoder → Projector → Embeddings (B, T, 192)
+                                                        ↓
+IMU Data → Action Encoder ──────────────→ AR Predictor (6-layer Transformer)
+                                                        ↓
+                                              Predicted Next Embedding
+                                                        ↓
+                                    Loss = MSE(pred, target) + λ · SIGReg
+```
 
-1. **LoRA Delta Extraction**: Extract only adapter weight changes
-2. **Top-K Sparsification**: Keep top 1% by magnitude (100x compression)
-3. **SignSGD Quantization**: 1-bit values with global scale (3x compression)
+- **SIGReg**: Sketch Isotropic Gaussian Regularizer — prevents representation collapse using characteristic function matching
+- **No EMA, no pretrained encoder, no auxiliary losses** — trains stably end-to-end from random init
 
-**Total**: >300x compression with error feedback for accuracy
+### Hardware Target: UBS1 Phone
 
-### Non-IID Data Distribution
+| Spec | Value |
+|------|-------|
+| SoC | Unisoc T616 |
+| CPU | 2× A75 @ 1.8GHz + 6× A55 @ 1.6GHz |
+| GPU | Mali-G57 MP2 (Vulkan 1.1) |
+| RAM | 4GB / 6GB LPDDR4X |
+| Storage | 64GB / 128GB eMMC |
 
-Simulation uses Dirichlet distribution (α=0.5) to create realistic data heterogeneity across clients, mimicking real-world phone user patterns.
+---
+
+## Roadmap
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| PoC | Tiny model, 5 clients, CPU simulation | ✅ Complete |
+| LeWM | World model integration, phone-feasible | ✅ Complete |
+| Federated | Real Qwen2.5-1.5B, 100 GPU clients | 🔨 In Progress |
+| Android | Camera + IMU pipeline, on-device LeWM | 📋 Planned |
+| Scale | 1,000 clients, multi-server | 📋 Planned |
+| Deploy | 10,000 phones, production | 📋 Planned |
+
+---
 
 ## Performance Targets
 
-- **Compression Ratio**: >300x (3MB → 10KB)
-- **Communication Cost**: <100KB per phone per round
-- **Training Latency**: <2 hours for 100 rounds (10K phones)
-- **Memory per Phone**: <4GB with LoRA + INT4 quantization
-- **Model Quality**: Target <5% accuracy drop vs centralized training
+| Metric | Qwen2.5 | LeWM |
+|--------|---------|------|
+| Compression | >300x | >300x |
+| Per-round comm | <10KB | <200KB |
+| Training memory | <4GB | <250MB |
+| 100 rounds (10K phones) | <2h | <30min |
+| Quality vs centralized | <5% drop | TBD |
+
+---
 
 ## License
 
-Proprietary - Oyster Project
+Proprietary — Oyster Labs

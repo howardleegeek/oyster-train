@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY deploy/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy model distributor and registration server (for API functionality)
+COPY deploy/model_distributor.py ./deploy/
+COPY deploy/registration_server.py ./deploy/
+
+# Expose port
+EXPOSE 8000
+
+# Command to run the model registry API
+CMD ["uvicorn", "deploy.registration_server:app", "--host", "0.0.0.0", "--port", "8000"]

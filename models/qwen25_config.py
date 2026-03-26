@@ -43,7 +43,7 @@ class FederationConfig(BaseModel):
 
 class CompressionConfig(BaseModel):
     """Gradient compression configuration."""
-    topk_ratio: float = 0.01
+    k_ratio: float = 0.01
     use_signsgd: bool = True
     error_feedback: bool = True
 
@@ -90,7 +90,7 @@ class Qwen25Config(BaseModel):
                 outer_momentum=0.9
             ),
             compression=CompressionConfig(
-                topk_ratio=0.01,
+                k_ratio=0.01,
                 use_signsgd=True,
                 error_feedback=True
             )
@@ -129,7 +129,7 @@ class Qwen25Config(BaseModel):
                 outer_momentum=0.9
             ),
             compression=CompressionConfig(
-                topk_ratio=0.05,
+                k_ratio=0.05,
                 use_signsgd=True,
                 error_feedback=True
             )
@@ -169,7 +169,7 @@ class Qwen25Config(BaseModel):
                 outer_momentum=0.9
             ),
             compression=CompressionConfig(
-                topk_ratio=0.1,
+                k_ratio=0.1,
                 use_signsgd=True,
                 error_feedback=True
             )

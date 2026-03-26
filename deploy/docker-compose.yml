@@ -1,42 +1,81 @@
 version: '3.8'
 
 services:
-  registration_server:
-    build: .
+  flower-server:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.server
+    ports:
+      - "8080:8080"
+    environment:
+      - NUM_CLIENTS=2
+      - NUM_ROUNDS=3
+      - MIN_AVAILABLE_CLIENTS=2
+    volumes:
+      - ./checkpoints:/app/checkpoints
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  model-registry:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.registry
     ports:
       - "8000:8000"
     volumes:
-      - ./models:/app/deploy/models
-      - ./data:/app/deploy/data
-    environment:
-      - PYTHONUNBUFFERED=1
+      - ./checkpoints:/app/checkpoints
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/stats"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
 
-  flower_server:
-    # Assuming Flower server from S01 would be here
-    # For now, using a placeholder that just sleeps
-    image: python:3.11-slim
-    command: ["sleep", "infinity"]
+  prometheus:
+    image: prom/prometheus:latest
     ports:
-      - "8080:8080"
+      - "9090:9090"
     volumes:
-      - ./models:/app/deploy/models
-      - ./data:/app/deploy/data
-    environment:
-      - PYTHONUNBUFFERED=1
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/dashboard/overview"]
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
 
-networks:
-  default:
-    name: oyster-train-net
-    driver: bridge
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/dashboard.json:/var/lib/grafana/dashboards/fl-monitoring.json:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  redis_data:
+  checkpoints:

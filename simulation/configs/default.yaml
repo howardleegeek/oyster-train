@@ -20,4 +20,4 @@ dataset: "synthetic"  # Use synthetic data for faster simulation
 
 # Compression
 compression: true
-topk_ratio: 0.01  # Keep top 1% of parameters
+k_ratio: 0.01  # Keep top 1% of parameters

@@ -46,7 +46,7 @@ class SimServer:
         # Global LoRA parameters
         self.global_params = None
         self.compression = CompressionPipeline(
-            topk_ratio=config.get("topk_ratio", 0.01)
+            k_ratio=config.get("k_ratio", 0.01)
         )
 
     def aggregate_fit(
@@ -109,7 +109,10 @@ class SimServer:
         avg_loss = np.mean([m["loss"] for m in round_metrics["clients"]])
         avg_memory = np.mean([m["peak_memory_mb"] for m in round_metrics["clients"]])
         avg_compression = np.mean([m["compression_ratio"] for m in round_metrics["clients"]])
-        total_bytes_saved = sum([m["bytes_saved"] for m in round_metrics["clients"]])
+        total_bytes_saved = sum([
+            m.get("original_size_bytes", 0) - m.get("compressed_size_bytes", 0)
+            for m in round_metrics["clients"]
+        ])
 
         round_metrics.update({
             "total_examples": total_examples,
@@ -210,7 +213,7 @@ class SimServer:
             "num_rounds": self.num_rounds,
             "total_clients": self.config.get("num_clients", 100),
             "final_loss": self.round_metrics[-1]["avg_loss"] if self.round_metrics else 0,
-            "compression_stats": self.compression.get_stats()
+            "compression_ratio": self.compression.get_compression_ratio()
         }
 
         summary_file = self.results_dir / "summary.json"
@@ -344,11 +347,9 @@ def run_simulation(
             )
         print("-" * 60)
 
-        compression_stats = server.compression.get_stats()
+        compression_ratio = server.compression.get_compression_ratio()
         print(f"\nCompression Statistics:")
-        print(f"  Total compressions: {compression_stats['num_compressions']}")
-        print(f"  Total bytes saved: {compression_stats.get('total_bytes_saved', 0) / 1024:.1f} KB")
-        print(f"  Average compression ratio: {compression_stats.get('average_compression_ratio', 1.0):.2f}x")
+        print(f"  Compression ratio: {compression_ratio:.2f}x")
 
 
 def main():

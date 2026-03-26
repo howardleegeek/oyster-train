@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Oyster Train</string>
+    <string name="training_status_active">Training Active</string>
+    <string name="training_status_idle">Training Idle</string>
+    <string name="start_training">Start Training</string>
+    <string name="stop_training">Stop Training</string>
+    <string name="server_connected">Connected</string>
+    <string name="server_disconnected">Disconnected</string>
+    <string name="training_statistics">Training Statistics</string>
+    <string name="connection_status">Server Connection</string>
+    <string name="training_progress">Training Progress</string>
+    <string name="model_info">Model Information</string>
+    <string name="rounds">Rounds</string>
+    <string name="loss">Loss</string>
+    <string name="accuracy">Accuracy</string>
+    <string name="steps">Steps</string>
+    <string name="memory">Memory</string>
+    <string name="uptime">Uptime</string>
+    <string name="model">Model</string>
+    <string name="lora_rank">LoRA Rank</string>
+    <string name="current_loss">Current Loss</string>
+    <string name="round">Round</string>
+    <string name="local_steps">Local Steps</string>
+</resources>

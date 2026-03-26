@@ -100,7 +100,7 @@ class DiLoCoStrategy(FedAvg):
 
     def configure_fit(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
-    ) -> Tuple[List[Tuple[ClientProxy, Config]], Config]:
+    ) -> List[Tuple[ClientProxy, "FitIns"]]:
         """Configure the next round of training.
 
         Args:
@@ -109,12 +109,14 @@ class DiLoCoStrategy(FedAvg):
             client_manager: The client manager which holds all currently connected clients.
 
         Returns:
-            A tuple of clients and config to be used for training in this round.
+            List of (client, FitIns) tuples for this round.
         """
+        from flwr.common import FitIns
+
         self.current_round = server_round
 
         # Use parent's configure_fit to get client configuration
-        clients_and_config = super().configure_fit(
+        clients_and_fit_ins = super().configure_fit(
             server_round, parameters, client_manager
         )
 
@@ -125,17 +127,18 @@ class DiLoCoStrategy(FedAvg):
             "current_round": server_round,
         }
 
-        # Update the config for each client
-        updated_clients = [
-            (client, {**cfg, **config_dict}) for client, cfg in clients_and_config
-        ]
+        # Update FitIns config for each client
+        updated_clients = []
+        for client, fit_ins in clients_and_fit_ins:
+            merged_config = {**fit_ins.config, **config_dict}
+            updated_clients.append((client, FitIns(fit_ins.parameters, merged_config)))
 
         logger.info(
             f"Round {server_round}: Configured {len(updated_clients)} clients "
             f"with {self.local_steps} local steps"
         )
 
-        return updated_clients, config_dict
+        return updated_clients
 
     def aggregate_fit(
         self,
@@ -206,12 +209,20 @@ class DiLoCoStrategy(FedAvg):
         aggregation_time = time.time() - start_time
         avg_loss = np.mean([l for l in losses if l != float("inf")])
 
+        # Aggregate compression ratio from client metrics
+        compression_ratios = [
+            fit_res.metrics.get("compression_ratio", 0.0)
+            for _, fit_res in results
+        ]
+        active_ratios = [r for r in compression_ratios if r > 0]
+        avg_compression = float(np.mean(active_ratios)) if active_ratios else 0.0
+
         metrics = {
             "aggregation_time": aggregation_time,
             "loss": float(avg_loss),
             "num_clients": len(results),
             "num_failures": len(failures),
-            "participating_clients": participating_clients,
+            "compression_ratio": avg_compression,
         }
 
         logger.info(
@@ -223,7 +234,7 @@ class DiLoCoStrategy(FedAvg):
 
     def configure_evaluate(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
-    ) -> List[Tuple[ClientProxy, Config]]:
+    ) -> List[Tuple[ClientProxy, "EvaluateIns"]]:
         """Configure evaluation on held-out validation set.
 
         Args:
@@ -232,20 +243,25 @@ class DiLoCoStrategy(FedAvg):
             client_manager: The client manager which holds all currently connected clients.
 
         Returns:
-            A list of tuples containing clients and config to be used for evaluation.
+            List of (client, EvaluateIns) tuples for this round.
         """
+        from flwr.common import EvaluateIns
+
         # Configure evaluation
         config_dict = {
             "eval_round": server_round,
         }
 
         # Use parent's configure_evaluate to get client configuration
-        clients_and_config = super().configure_evaluate(
+        clients_and_eval_ins = super().configure_evaluate(
             server_round, parameters, client_manager
         )
 
-        # Update config for each client
-        updated_clients = [(client, {**cfg, **config_dict}) for client, cfg in clients_and_config]
+        # Update EvaluateIns config for each client
+        updated_clients = []
+        for client, eval_ins in clients_and_eval_ins:
+            merged_config = {**eval_ins.config, **config_dict}
+            updated_clients.append((client, EvaluateIns(eval_ins.parameters, merged_config)))
 
         logger.info(
             f"Round {server_round}: Configured {len(updated_clients)} clients for evaluation"

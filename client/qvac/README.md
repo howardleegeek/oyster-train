@@ -1,83 +1,303 @@
-# QVAC Fabric LLM Build System for Android ARM64
+# QVAC - Quantized Video-Assisted Copilot
 
-## Source Location
-QVAC Fabric LLM is a llama.cpp fork by Tether Data that adds LoRA training with mobile GPU support.
-The source should be placed in `client/qvac/llama.cpp` (or adjust paths accordingly).
+QVAC is a customized build of [llama.cpp](https://github.com/ggerganov/llama.cpp) for Android ARM64 devices, specifically optimized for the UBS1 phone.
 
-## Build Requirements
-- Android NDK r26+
-- CMake 3.20+
-- Python 3.10+ (for model preparation)
-- Required Python packages: transformers, huggingface_hub, gguf
+## UBS1 Phone Hardware Specifications
 
-## Cross-compilation Guide for Android ARM64 (Unisoc T616)
+### CPU
+- **SoC**: Unisoc T616
+- **Architecture**: ARMv8-A
+- **Big Core**: 2x Cortex-A75 @ 1.8 GHz
+- **Little Core**: 6x Cortex-A55 @ 1.6 GHz
+- **ISA**: ARM64-v8a
 
-### Step 1: Install Dependencies
+### GPU
+- **Model**: Mali-G57 MP2
+- **Architecture**: Valhall (Arm Immortalis series)
+- **Vulkan Support**: Vulkan 1.1+
+- **Compute Shaders**: Supported (via Vulkan)
+- **Memory**: Shared with system RAM
+
+### Memory
+- **RAM**: 4GB / 6GB LPDDR4X
+- **Storage**: 64GB / 128GB eMMC
+
+### Android Version
+- **Target API**: 28+ (Android 9.0+)
+
+## Features
+
+- **GGUF Model Format**: Support for quantized models (Qwen2.5-1.5B INT4)
+- **LoRA Fine-Tuning**: On-device fine-tuning capability via the `finetune` binary
+- **Vulkan GPU Acceleration**: Hardware acceleration via Mali-G57
+- **Cross-Compiled**: Built for Android ARM64 from Linux/macOS/Windows hosts
+
+## Prerequisites
+
+### Build Machine Requirements
+- **Operating System**: Linux, macOS, or Windows (WSL2)
+- **CMake**: Version 3.20 or later
+- **Ninja**: Build system
+- **Git**: Version control
+- **Android NDK**: r26b or later
+
+### Installing Android NDK
+
+#### Linux/macOS
 ```bash
-# Install Android NDK (r26+)
-# Install CMake (3.20+)
-# Install Python packages for model preparation:
-pip install transformers huggingface_hub gguf
+# Download NDK r26b
+wget https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
+
+# Extract
+unzip android-ndk-r26b-linux.zip
+
+# Set environment variable
+export ANDROID_NDK_HOME=/path/to/android-ndk-r26b
 ```
 
-### Step 2: Prepare the Model
-Run the model preparation script to download and quantize the model:
-```bash
-cd client/qvac
-python model_prep.py
-```
-This will download Qwen2.5-1.5B-Instruct from HuggingFace, convert to GGUF (INT4), and configure a LoRA adapter.
+#### Via Android Studio
+1. Open Android Studio
+2. Go to SDK Manager
+3. Install NDK (Side by side) - version 26.2.11394342 or later
 
-### Step 3: Build for Android
+## Building
+
+### Quick Start
+
 ```bash
 cd client/qvac
-chmod +x build_android.sh
 ./build_android.sh
 ```
-The build will output to `client/qvac/build/`.
 
-### Step 4: Verify the Build
+This will:
+1. Clone the latest llama.cpp repository
+2. Configure CMake for Android ARM64
+3. Build with Vulkan and LoRA support enabled
+4. Output binaries to `out/arm64-v8a/`
+
+### Custom NDK Path
+
 ```bash
-chmod +x test_build.sh
-./test_build.sh
+./build_android.sh /path/to/android-ndk-r26b
 ```
 
-## Target Hardware Specifications
-- **CPU**: Unisoc T616 (ARM Cortex-A75 + Cortex-A55, ARMv8.2-A)
-- **GPU**: Mali-G57 MP1 (Vulkan 1.1 supported)
-- **Android Version**: 14 (API level 34)
+### Custom API Level
 
-## CMake Configuration Flags Used
-- `-DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake`
-- `-DANDROID_ABI=arm64-v8a`
-- `-DANDROID_PLATFORM=android-34`
-- `-DGGML_VULKAN=ON` (for Mali-G57 GPU acceleration)
-- `-DGGML_NEON=ON` (ARM NEON SIMD for Cortex-A75)
-- `-DLLAMA_LORA_TRAIN=ON` (enable LoRA training)
+```bash
+./build_android.sh /path/to/android-ndk-r26b 29
+```
 
-## Optimization for Cortex-A75
-The wrapper CMakeLists.txt sets `-mcpu=cortex-a75` for optimized code generation.
+### Build Configuration
 
-## Fallback Plan: CPU-only
-If Vulkan is not available or desired, set `-DGGML_VULKAN=OFF` in the build script.
-The system will fall back to CPU execution with NEON SIMD acceleration.
+The build script configures llama.cpp with the following options:
 
-## Memory Usage Estimation
-For Qwen2.5-1.5B-Instruct quantized to INT4:
-- Model size: ~0.5 GB
-- Runtime memory: ~1.5 GB (including KV cache and overhead)
-- Suitable for devices with 3GB+ RAM (targeting 6GB devices)
+| Option | Value | Description |
+|--------|-------|-------------|
+| Target | arm64-v8a | ARM64 Android architecture |
+| API Level | 28+ | Android 9.0+ |
+| STL | c++_shared | Shared C++ runtime |
+| Vulkan | ON | GPU acceleration for Mali-G57 |
+| Examples | ON | Build finetune and other tools |
+| Tests | OFF | Skip test builds |
+| Server | OFF | Skip server builds |
+| Build Type | Release | Optimized release build |
 
-## LoRA Training Configuration
-- Rank: 4
-- Alpha: 8
-- Target modules: QKV projections (standard for Llama-like models)
+## Output Files
+
+After a successful build, the following files are available in `out/arm64-v8a/`:
+
+```
+out/arm64-v8a/
+├── bin/
+│   ├── finetune           # LoRA fine-tuning tool
+│   ├── main               # Inference CLI
+│   ├── quantize           # Model quantization
+│   └── export-lora        # LoRA adapter export
+├── lib/
+│   └── libllama.so        # Main shared library
+└── include/
+    ├── llama.h            # Main API header
+    └── llama/
+        └── ...            # Additional headers
+```
+
+## Installing on UBS1 Phone
+
+### Using ADB
+
+```bash
+# Connect phone via USB with USB debugging enabled
+adb devices
+
+# Push files to phone
+adb push out/arm64-v8a/lib/libllama.so /data/local/tmp/
+adb push out/arm64-v8a/bin/* /data/local/tmp/
+
+# Set executable permissions
+adb shell chmod +x /data/local/tmp/finetune
+adb shell chmod +x /data/local/tmp/main
+
+# Test inference
+adb shell /data/local/tmp/main -m model.gguf -p "Hello, how are you?"
+
+# Test LoRA fine-tuning
+adb shell /data/local/tmp/finetune --model model.gguf --lora-output my_adapter.gguf --train-data train.txt
+```
+
+## Supported Models
+
+### Qwen2.5-1.5B INT4
+- **File**: `qwen2.5-1.5b-instruct-q4_0.gguf`
+- **Size**: ~1 GB
+- **RAM Required**: ~2-3 GB (shared with Vulkan)
+
+### Other GGUF Models
+QVAC supports any GGUF model compatible with llama.cpp, including:
+- Llama 2/3 variants
+- Mistral
+- Phi
+- Gemma
+- Other quantized models
+
+## LoRA Fine-Tuning
+
+QVAC includes the `finetune` example from llama.cpp, enabling on-device fine-tuning using LoRA (Low-Rank Adaptation).
+
+### Basic LoRA Training
+
+```bash
+# Prepare training data (one example per line)
+echo "User: Hello\nAssistant: Hi there!" > train.txt
+
+# Fine-tune on device
+adb shell /data/local/tmp/finetune \
+  --model qwen2.5-1.5b-instruct-q4_0.gguf \
+  --lora-output adapter.gguf \
+  --train-data train.txt \
+  --lora-r 16 \
+  --lora-alpha 32 \
+  --train-epochs 3
+
+# Use adapter for inference
+adb shell /data/local/tmp/main \
+  --model qwen2.5-1.5b-instruct-q4_0.gguf \
+  --lora-adapter adapter.gguf \
+  --prompt "Hello, how are you?"
+```
+
+## Vulkan GPU Acceleration
+
+QVAC automatically uses Vulkan for GPU acceleration when available on the UBS1 phone.
+
+### Vulkan Verification
+
+```bash
+# Check Vulkan support on device
+adb shell dumpsys package | grep vulkan
+
+# Verify Vulkan layers (optional)
+adb shell ls /data/local/tmp/vulkan/
+```
+
+### Troubleshooting GPU
+
+If GPU acceleration isn't working:
+1. Ensure Vulkan drivers are up to date
+2. Check GPU memory availability with `adb shell cat /proc/meminfo`
+3. Reduce model size or batch size to fit available memory
+
+## Performance Tips
+
+### For Mali-G57 MP2
+- **Batch Size**: 1-2 tokens
+- **Context Length**: 2048 tokens optimal
+- **Quantization**: Q4_0 or Q4_K_M recommended
+- **Memory**: Use INT4 models to fit in 4-6GB RAM
+
+### For Better Performance
+- Close other apps while running
+- Use Performance Mode (if available in phone settings)
+- Reduce context length for faster inference
+- Use smaller batch sizes for real-time applications
 
 ## Troubleshooting
-1. **Build fails**: Ensure NDK and CMake versions meet requirements
-2. **Vulkan not working**: Check device drivers and Vulkan support
-3. **Model loading errors**: Verify model files are correctly quantized and placed in `client/qvac/models/`
-4. **Performance issues**: Ensure NEON is enabled and consider adjusting LoRA parameters
+
+### Build Issues
+
+**NDK not found:**
+```bash
+# Set ANDROID_NDK_HOME explicitly
+export ANDROID_NDK_HOME=/path/to/android-ndk-r26b
+./build_android.sh
+```
+
+**CMake toolchain error:**
+```bash
+# Verify NDK version is r26b or later
+cat $ANDROID_NDK_HOME/source.properties
+```
+
+**Git clone fails:**
+```bash
+# Check network connectivity
+curl -I https://github.com/ggerganov/llama.cpp
+
+# Or clone manually
+cd client/qvac
+git clone https://github.com/ggerganov/llama.cpp.git
+./build_android.sh
+```
+
+### Runtime Issues on Phone
+
+**libllama.so not found:**
+```bash
+# Set LD_LIBRARY_PATH
+adb shell export LD_LIBRARY_PATH=/data/local/tmp
+```
+
+**Permission denied:**
+```bash
+# Make binaries executable
+adb shell chmod +x /data/local/tmp/*
+```
+
+**Vulkan not available:**
+```bash
+# Check if Vulkan is supported
+adb shell dumpsys SurfaceFlinger | grep vulkan
+```
+
+## Project Structure
+
+```
+client/qvac/
+├── build_android.sh          # Main build script
+├── CMakeLists.txt             # Custom CMake overlay
+├── README.md                  # This file
+├── llama.cpp/                 # Cloned llama.cpp (generated)
+│   ├── include/
+│   ├── src/
+│   └── examples/
+├── out/                       # Build output
+│   └── arm64-v8a/
+│       ├── bin/
+│       ├── lib/
+│       └── include/
+└── src/                       # Custom QVAC sources
+    ├── qvac.cpp
+    └── tools/
+        ├── qvac_finetune.cpp
+        └── qvac_inference.cpp
+```
+
+## References
+
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) - Base implementation
+- [GGUF Format](https://github.com/ggerganov/ggml/blob/master/docs/gguf.md) - Model format
+- [Mali-G57 Specs](https://developer.arm.com/Processors/Mali-G57) - GPU details
+- [Unisoc T616](https://www.unisoc.com/) - SoC details
 
 ## License
-QVAC Fabric LLM is licensed under the Apache 2.0 license. See the source repository for details.
+
+QVAC inherits the license from llama.cpp (MIT License).

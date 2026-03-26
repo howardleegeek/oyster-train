@@ -61,7 +61,7 @@ class PhoneClient(fl.client.NumPyClient):
 
         # Compression
         self.compression = CompressionPipeline(
-            topk_ratio=config.get("topk_ratio", 0.01)
+            k_ratio=config.get("k_ratio", 0.01)
         )
 
         # Memory tracking
@@ -192,17 +192,25 @@ class PhoneClient(fl.client.NumPyClient):
         self._log_memory()
 
         # Compute delta (difference from initial params)
+        delta_dict = {}
         delta_params = []
         for name, param in self.model.named_parameters():
             if "lora" in name.lower() and name in initial_params:
-                delta = (param.detach().cpu() - initial_params[name]).numpy()
-                delta_params.append(delta)
+                delta = param.detach().cpu() - initial_params[name].cpu()
+                delta_dict[name] = delta
+                delta_params.append(delta.numpy())
 
-        # Compress delta
-        compressed_delta, compression_meta = self.compression.compress(delta_params)
+        # Calculate original size for compression benchmarking
+        original_size = sum(
+            t.element_size() * t.nelement() for t in delta_dict.values()
+        )
+
+        # Compress delta (for benchmarking/metrics — Flower sends uncompressed)
+        compressed_bytes = self.compression.compress(delta_dict, original_size=original_size)
+        compression_ratio = self.compression.get_compression_ratio()
 
         # Clean up
-        del initial_params, delta_params
+        del initial_params, delta_dict
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -212,8 +220,9 @@ class PhoneClient(fl.client.NumPyClient):
             "loss": total_loss / num_batches if num_batches > 0 else 0,
             "num_examples": len(self.train_dataset),
             "peak_memory_mb": self.peak_memory,
-            "compression_ratio": compression_meta.get("compression_ratio", 1.0),
-            "bytes_saved": compression_meta.get("bytes_saved", 0)
+            "compression_ratio": compression_ratio,
+            "original_size_bytes": original_size,
+            "compressed_size_bytes": len(compressed_bytes)
         }
 
         logger.info(
@@ -223,7 +232,8 @@ class PhoneClient(fl.client.NumPyClient):
             f"Compression={metrics['compression_ratio']:.2f}x"
         )
 
-        return compressed_delta, len(self.train_dataset), metrics
+        # Return uncompressed deltas for Flower protocol
+        return delta_params, len(self.train_dataset), metrics
 
     def evaluate(self, parameters: list[np.ndarray], config: Dict) -> Tuple[float, int, Dict]:
         """Evaluate on local validation shard.
