@@ -1,27 +1,41 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-kapt")
-    id("com.google.dagger.hilt.android")
+    id("com.chaquo.python")
 }
 
 android {
-    namespace = "ai.clawphones.train"
+    namespace = "ai.oyster.train"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "ai.clawphones.train"
+        applicationId = "ai.oyster.train"
         minSdk = 28
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
+        vectorDrawables { useSupportLibrary = true }
+
+        // Chaquopy: Python runtime + pip packages
+        python {
+            version = "3.11"
+            pip {
+                install("numpy")
+                install("torch")
+                install("torchvision")
+                install("einops")
+                install("flwr")
+                install("msgpack-python")
+                install("pyyaml")
+                install("pydantic")
+                install("pydantic-settings")
+            }
         }
 
-        buildConfigField("String", "FLOWER_SERVER_URL", "\"\"")
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -32,9 +46,6 @@ android {
                 "proguard-rules.pro"
             )
         }
-        debug {
-            buildConfigField("String", "FLOWER_SERVER_URL", "\"10.0.2.2:50051\"")
-        }
     }
 
     compileOptions {
@@ -42,69 +53,42 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    kotlinOptions { jvmTarget = "17" }
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.4"
-    }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.4" }
 
     packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    }
+
+    sourceSets {
+        getByName("main") {
+            python.srcDir("src/main/python")
         }
     }
 }
 
 dependencies {
-    // Core Android
+    // Core
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.1")
 
-    // Jetpack Compose
+    // Compose
     implementation(platform("androidx.compose:compose-bom:2023.10.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
 
-    // Navigation
-    implementation("androidx.navigation:navigation-compose:2.7.5")
-
-    // Hilt for DI
-    implementation("com.google.dagger:hilt-android:2.48")
-    kapt("com.google.dagger:hilt-compiler:2.48")
-    implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
-
-    // gRPC
-    implementation("io.grpc:grpc-okhttp:1.60.0")
-    implementation("io.grpc:grpc-protobuf-lite:1.60.0")
-    implementation("io.grpc:grpc-stub:1.60.0")
-    implementation("com.google.protobuf:protobuf-javalite:3.25.1")
-
-    // Flower Android SDK (placeholder - actual dependency would be added when available)
-    // implementation("ai.flower:flower-client-android:1.0.0")
-
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // Testing
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2023.10.01"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
-}
-
-kapt {
-    correctErrorTypes = true
 }
