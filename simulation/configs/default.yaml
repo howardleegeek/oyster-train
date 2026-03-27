@@ -1,0 +1,23 @@
+# Default configuration for federated learning simulation
+
+# Simulation parameters
+num_clients: 100
+num_rounds: 10
+local_steps: 500
+batch_size: 4
+max_seq_len: 256
+
+# LoRA parameters
+lora_rank: 4
+lora_alpha: 8
+
+# Model
+model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+
+# Data distribution
+data_alpha: 0.5  # Dirichlet parameter (smaller = more heterogeneous)
+dataset: "synthetic"  # Use synthetic data for faster simulation
+
+# Compression
+compression: true
+k_ratio: 0.01  # Keep top 1% of parameters
