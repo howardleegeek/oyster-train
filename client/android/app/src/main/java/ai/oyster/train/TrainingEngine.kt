@@ -7,24 +7,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
+enum class ModelType { LEWM, QWEN, BOTH }
+
 /**
- * Bridge to the Python training engine via Chaquopy.
- * Replaces the old NativeEngine JNI approach.
+ * Dual-model training engine — LeWM (world model) + Qwen (LLM).
+ * Bridges Kotlin UI to Python engines via Chaquopy.
  */
 class TrainingEngine {
 
     private val py: Python = Python.getInstance()
-    private val engine: PyObject = py.getModule("oyster.engine")
+    private val lewmEngine: PyObject = py.getModule("oyster.engine")
+    private val qwenEngine: PyObject = py.getModule("oyster.qwen_engine")
 
     companion object {
         private const val TAG = "TrainingEngine"
     }
 
-    /**
-     * Get device info (RAM, platform, PyTorch version).
-     */
+    // ─── Device info ─────────────────────────────────────────────
+
     suspend fun getDeviceInfo(): DeviceInfo = withContext(Dispatchers.IO) {
-        val json = engine.callAttr("get_device_info").toString()
+        val json = lewmEngine.callAttr("get_device_info").toString()
         val obj = JSONObject(json)
         DeviceInfo(
             platform = obj.optString("platform"),
@@ -36,55 +38,134 @@ class TrainingEngine {
         )
     }
 
-    /**
-     * Run a quick model build + forward pass test.
-     */
-    suspend fun runQuickTest(): TestResult = withContext(Dispatchers.IO) {
-        Log.i(TAG, "Running quick test...")
-        val json = engine.callAttr("run_quick_test").toString()
+    // ─── LeWM (world model) ──────────────────────────────────────
+
+    suspend fun testLeWM(): TestResult = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Testing LeWM...")
+        val json = lewmEngine.callAttr("run_quick_test").toString()
         val obj = JSONObject(json)
         TestResult(
             success = obj.optString("status") == "ok",
+            modelName = "LeWM JEPA",
             params = obj.optLong("params", 0),
             loss = obj.optDouble("loss", 0.0).toFloat(),
             torchVersion = obj.optString("torch_version"),
             error = obj.optString("error", ""),
+            tokensPerSec = 0f,
         )
     }
 
-    /**
-     * Start federated training — connects to Flower server.
-     */
-    suspend fun startTraining(
-        serverAddress: String,
-        numRounds: Int = 100,
-        localSteps: Int = 50
-    ): Boolean = withContext(Dispatchers.IO) {
-        Log.i(TAG, "Starting training: server=$serverAddress, rounds=$numRounds, steps=$localSteps")
+    suspend fun startLeWMTraining(serverAddress: String): Boolean = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Starting LeWM training: server=$serverAddress")
         try {
-            engine.callAttr("start_training", serverAddress, numRounds, localSteps)
+            lewmEngine.callAttr("start_training", serverAddress, 100, 50)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start training", e)
+            Log.e(TAG, "LeWM training failed", e)
             false
         }
     }
 
-    /**
-     * Stop training gracefully.
-     */
-    suspend fun stopTraining() = withContext(Dispatchers.IO) {
-        Log.i(TAG, "Stopping training")
-        engine.callAttr("stop_training")
+    suspend fun getLeWMStatus(): TrainingStatus = withContext(Dispatchers.IO) {
+        val json = lewmEngine.callAttr("get_status").toString()
+        parseStatus(json, "LeWM")
     }
 
-    /**
-     * Get current training status.
-     */
-    suspend fun getStatus(): TrainingStatus = withContext(Dispatchers.IO) {
-        val json = engine.callAttr("get_status").toString()
+    suspend fun stopLeWM() = withContext(Dispatchers.IO) {
+        lewmEngine.callAttr("stop_training")
+    }
+
+    // ─── Qwen (LLM) ─────────────────────────────────────────────
+
+    suspend fun downloadQwen(): DownloadResult = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Downloading Qwen2.5-0.5B GGUF...")
+        val json = qwenEngine.callAttr("download_model").toString()
         val obj = JSONObject(json)
-        TrainingStatus(
+        DownloadResult(
+            success = obj.optString("status") != "error",
+            sizeMb = obj.optDouble("size_mb", 0.0).toFloat(),
+            error = obj.optString("error", ""),
+        )
+    }
+
+    suspend fun loadQwen(modelDir: String? = null): TestResult = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Loading Qwen model...")
+        if (modelDir != null) {
+            qwenEngine.callAttr("set_model_dir", modelDir)
+        }
+        val loadJson = qwenEngine.callAttr("load_model", 512, 4).toString()
+        val loadObj = JSONObject(loadJson)
+        if (loadObj.optString("status") == "error") {
+            return@withContext TestResult(
+                success = false, modelName = "Qwen2.5-0.5B", params = 0,
+                loss = 0f, torchVersion = "", tokensPerSec = 0f,
+                error = loadObj.optString("error"),
+            )
+        }
+
+        // Run quick inference test
+        val testJson = qwenEngine.callAttr("run_quick_test").toString()
+        val obj = JSONObject(testJson)
+        TestResult(
+            success = obj.optString("status") == "ok",
+            modelName = obj.optString("model", "Qwen2.5-0.5B"),
+            params = obj.optLong("lora_params", 0),
+            loss = 0f,
+            torchVersion = "",
+            tokensPerSec = obj.optDouble("tokens_per_sec", 0.0).toFloat(),
+            error = obj.optString("error", ""),
+        )
+    }
+
+    suspend fun generateText(prompt: String, maxTokens: Int = 64): GenerateResult = withContext(Dispatchers.IO) {
+        val json = qwenEngine.callAttr("generate", prompt, maxTokens).toString()
+        val obj = JSONObject(json)
+        GenerateResult(
+            text = obj.optString("text", ""),
+            tokensPerSec = obj.optDouble("tokens_per_sec", 0.0).toFloat(),
+            error = obj.optString("error", ""),
+        )
+    }
+
+    suspend fun startQwenTraining(serverAddress: String): Boolean = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Starting Qwen LoRA training: server=$serverAddress")
+        try {
+            qwenEngine.callAttr("start_training", serverAddress, 100, 10)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Qwen training failed", e)
+            false
+        }
+    }
+
+    suspend fun getQwenStatus(): TrainingStatus = withContext(Dispatchers.IO) {
+        val json = qwenEngine.callAttr("get_status").toString()
+        parseStatus(json, "Qwen")
+    }
+
+    suspend fun stopQwen() = withContext(Dispatchers.IO) {
+        qwenEngine.callAttr("stop_training")
+    }
+
+    // ─── Dual model helpers ──────────────────────────────────────
+
+    suspend fun startDualTraining(serverAddress: String): Pair<Boolean, Boolean> {
+        val lewm = startLeWMTraining(serverAddress)
+        val qwen = startQwenTraining(serverAddress)
+        return Pair(lewm, qwen)
+    }
+
+    suspend fun stopAll() {
+        stopLeWM()
+        stopQwen()
+    }
+
+    // ─── Private ─────────────────────────────────────────────────
+
+    private fun parseStatus(json: String, model: String): TrainingStatus {
+        val obj = JSONObject(json)
+        return TrainingStatus(
+            model = model,
             state = obj.optString("state", "idle"),
             round = obj.optInt("round", 0),
             totalRounds = obj.optInt("total_rounds", 0),
@@ -95,6 +176,8 @@ class TrainingEngine {
             memoryMb = obj.optInt("memory_mb", 0),
             server = obj.optString("server", ""),
             error = obj.optString("error", ""),
+            tokensPerSec = obj.optDouble("tokens_per_sec", 0.0).toFloat(),
+            loraSizeMb = obj.optDouble("lora_size_mb", 0.0).toFloat(),
         )
     }
 }
@@ -110,13 +193,28 @@ data class DeviceInfo(
 
 data class TestResult(
     val success: Boolean,
+    val modelName: String = "",
     val params: Long,
     val loss: Float,
     val torchVersion: String,
+    val tokensPerSec: Float = 0f,
+    val error: String,
+)
+
+data class DownloadResult(
+    val success: Boolean,
+    val sizeMb: Float,
+    val error: String,
+)
+
+data class GenerateResult(
+    val text: String,
+    val tokensPerSec: Float,
     val error: String,
 )
 
 data class TrainingStatus(
+    val model: String = "",
     val state: String,
     val round: Int,
     val totalRounds: Int,
@@ -127,4 +225,6 @@ data class TrainingStatus(
     val memoryMb: Int,
     val server: String,
     val error: String,
+    val tokensPerSec: Float = 0f,
+    val loraSizeMb: Float = 0f,
 )

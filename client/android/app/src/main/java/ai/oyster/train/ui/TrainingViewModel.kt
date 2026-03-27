@@ -2,39 +2,42 @@ package ai.oyster.train.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import ai.oyster.train.ModelType
 import ai.oyster.train.TrainingEngine
-import ai.oyster.train.TrainingStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class TrainingUiState(
-    val isTrainingActive: Boolean = false,
-    val isConnectedToServer: Boolean = false,
-    val serverAddress: String = "Not connected",
-    val currentRound: Int = 0,
+data class ModelStatus(
+    val name: String = "",
+    val ready: Boolean = false,
+    val training: Boolean = false,
+    val round: Int = 0,
     val totalRounds: Int = 100,
-    val localSteps: Int = 0,
-    val totalLocalSteps: Int = 50,
-    val currentLoss: Float = 0.0f,
-    val accuracy: Float = 0.0f,
-    val totalStepsCompleted: Int = 0,
-    val memoryUsageMB: Int = 0,
-    val uptime: String = "0h 0m",
-    val modelName: String = "LeWM (JEPA)",
-    val loraRank: Int = 0,  // 0 = full parameter training
+    val step: Int = 0,
+    val totalSteps: Int = 0,
+    val loss: Float = 0f,
     val paramsM: Float = 0f,
+    val tokensPerSec: Float = 0f,
+    val error: String = "",
+)
+
+data class TrainingUiState(
+    val selectedModel: ModelType = ModelType.BOTH,
+    val serverAddress: String = "10.0.2.2:8080",
+    val isTrainingActive: Boolean = false,
+    val lewm: ModelStatus = ModelStatus(name = "LeWM JEPA (4.8M)"),
+    val qwen: ModelStatus = ModelStatus(name = "Qwen2.5-0.5B"),
+    val qwenDownloaded: Boolean = false,
+    val qwenDownloading: Boolean = false,
+    val qwenDownloadProgress: String = "",
+    val uptime: String = "0h 0m",
     val torchVersion: String = "",
-    val modelTestPassed: Boolean = false,
     val errorMessage: String = "",
 )
 
-/**
- * ViewModel that connects the Compose UI to the real Python training engine.
- * No more simulation — this drives actual PyTorch + Flower FL.
- */
 class TrainingViewModel : ViewModel() {
 
     private val engine = TrainingEngine()
@@ -44,58 +47,116 @@ class TrainingViewModel : ViewModel() {
     private var startTime = 0L
 
     init {
-        // Run quick model test on startup
+        // Test LeWM on startup
         viewModelScope.launch {
             try {
-                val result = engine.runQuickTest()
+                val result = engine.testLeWM()
                 _uiState.value = _uiState.value.copy(
-                    modelTestPassed = result.success,
-                    paramsM = result.params / 1_000_000f,
+                    lewm = _uiState.value.lewm.copy(
+                        ready = result.success,
+                        paramsM = result.params / 1_000_000f,
+                        loss = result.loss,
+                        error = result.error,
+                    ),
                     torchVersion = result.torchVersion,
-                    currentLoss = result.loss,
-                    errorMessage = result.error,
-                    modelName = "LeWM ${String.format("%.1f", result.params / 1_000_000f)}M",
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
-                    errorMessage = "Model init failed: ${e.message}"
+                    errorMessage = "LeWM init failed: ${e.message}"
                 )
             }
         }
+    }
+
+    fun selectModel(model: ModelType) {
+        _uiState.value = _uiState.value.copy(selectedModel = model)
+    }
+
+    fun downloadQwen() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(qwenDownloading = true, qwenDownloadProgress = "Downloading ~350MB...")
+            try {
+                val result = engine.downloadQwen()
+                if (result.success) {
+                    _uiState.value = _uiState.value.copy(
+                        qwenDownloading = false,
+                        qwenDownloadProgress = "Downloaded ${result.sizeMb}MB",
+                    )
+                    // Load model after download
+                    loadQwen()
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        qwenDownloading = false,
+                        errorMessage = "Download failed: ${result.error}",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    qwenDownloading = false,
+                    errorMessage = "Download error: ${e.message}",
+                )
+            }
+        }
+    }
+
+    private suspend fun loadQwen() {
+        val result = engine.loadQwen()
+        _uiState.value = _uiState.value.copy(
+            qwenDownloaded = result.success,
+            qwen = _uiState.value.qwen.copy(
+                ready = result.success,
+                tokensPerSec = result.tokensPerSec,
+                error = result.error,
+            ),
+        )
     }
 
     fun startTraining(serverAddress: String = "10.0.2.2:8080") {
         viewModelScope.launch {
             startTime = System.currentTimeMillis()
+            val model = _uiState.value.selectedModel
 
-            val success = engine.startTraining(
+            _uiState.value = _uiState.value.copy(
                 serverAddress = serverAddress,
-                numRounds = 100,
-                localSteps = 50,
+                errorMessage = "",
             )
 
-            if (success) {
-                _uiState.value = _uiState.value.copy(
-                    isTrainingActive = true,
-                    isConnectedToServer = true,
-                    serverAddress = serverAddress,
-                    errorMessage = "",
-                )
-                // Start polling status
-                pollStatus()
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "Failed to connect to $serverAddress"
-                )
+            when (model) {
+                ModelType.LEWM -> {
+                    val ok = engine.startLeWMTraining(serverAddress)
+                    _uiState.value = _uiState.value.copy(
+                        isTrainingActive = ok,
+                        lewm = _uiState.value.lewm.copy(training = ok),
+                    )
+                }
+                ModelType.QWEN -> {
+                    val ok = engine.startQwenTraining(serverAddress)
+                    _uiState.value = _uiState.value.copy(
+                        isTrainingActive = ok,
+                        qwen = _uiState.value.qwen.copy(training = ok),
+                    )
+                }
+                ModelType.BOTH -> {
+                    val (lewmOk, qwenOk) = engine.startDualTraining(serverAddress)
+                    _uiState.value = _uiState.value.copy(
+                        isTrainingActive = lewmOk || qwenOk,
+                        lewm = _uiState.value.lewm.copy(training = lewmOk),
+                        qwen = _uiState.value.qwen.copy(training = qwenOk),
+                    )
+                }
             }
+
+            if (_uiState.value.isTrainingActive) pollStatus()
         }
     }
 
     fun stopTraining() {
         viewModelScope.launch {
-            engine.stopTraining()
+            engine.stopAll()
             _uiState.value = _uiState.value.copy(
-                isTrainingActive = false
+                isTrainingActive = false,
+                lewm = _uiState.value.lewm.copy(training = false),
+                qwen = _uiState.value.qwen.copy(training = false),
             )
         }
     }
@@ -105,32 +166,40 @@ class TrainingViewModel : ViewModel() {
             while (_uiState.value.isTrainingActive) {
                 delay(1000)
                 try {
-                    val status = engine.getStatus()
                     val elapsed = (System.currentTimeMillis() - startTime) / 1000
-                    val hours = elapsed / 3600
-                    val minutes = (elapsed % 3600) / 60
+                    val uptime = "${elapsed / 3600}h ${(elapsed % 3600) / 60}m"
 
-                    _uiState.value = _uiState.value.copy(
-                        currentRound = status.round,
-                        totalRounds = if (status.totalRounds > 0) status.totalRounds else _uiState.value.totalRounds,
-                        localSteps = status.step,
-                        totalLocalSteps = if (status.totalSteps > 0) status.totalSteps else _uiState.value.totalLocalSteps,
-                        currentLoss = status.loss,
-                        memoryUsageMB = status.memoryMb,
-                        totalStepsCompleted = _uiState.value.totalStepsCompleted + 1,
-                        uptime = "${hours}h ${minutes}m",
-                        isTrainingActive = status.state == "training" || status.state == "connecting",
-                        isConnectedToServer = status.state != "error",
-                        errorMessage = status.error,
-                    )
+                    if (_uiState.value.lewm.training) {
+                        val s = engine.getLeWMStatus()
+                        _uiState.value = _uiState.value.copy(
+                            uptime = uptime,
+                            lewm = _uiState.value.lewm.copy(
+                                round = s.round, totalRounds = s.totalRounds,
+                                step = s.step, totalSteps = s.totalSteps,
+                                loss = s.loss,
+                                training = s.state == "training" || s.state == "connecting",
+                            ),
+                        )
+                    }
 
-                    // Auto-stop if training finished or errored
-                    if (status.state == "idle" || status.state == "error") {
+                    if (_uiState.value.qwen.training) {
+                        val s = engine.getQwenStatus()
+                        _uiState.value = _uiState.value.copy(
+                            uptime = uptime,
+                            qwen = _uiState.value.qwen.copy(
+                                round = s.round, totalRounds = s.totalRounds,
+                                step = s.step, totalSteps = s.totalSteps,
+                                loss = s.loss, tokensPerSec = s.tokensPerSec,
+                                training = s.state == "training" || s.state == "connecting",
+                            ),
+                        )
+                    }
+
+                    // Auto-stop if both finished
+                    if (!_uiState.value.lewm.training && !_uiState.value.qwen.training) {
                         _uiState.value = _uiState.value.copy(isTrainingActive = false)
                     }
-                } catch (e: Exception) {
-                    // Keep polling, engine might recover
-                }
+                } catch (_: Exception) {}
             }
         }
     }

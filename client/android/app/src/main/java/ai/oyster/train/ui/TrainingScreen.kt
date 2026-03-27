@@ -1,5 +1,6 @@
 package ai.oyster.train.ui
 
+import ai.oyster.train.ModelType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -19,7 +20,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TrainingScreen(viewModel: TrainingViewModel = viewModel()) {
-    val uiState by viewModel.uiState.collectAsState()
+    val ui by viewModel.uiState.collectAsState()
     var serverInput by remember { mutableStateOf("10.0.2.2:8080") }
 
     Scaffold(
@@ -28,134 +29,197 @@ fun TrainingScreen(viewModel: TrainingViewModel = viewModel()) {
                 title = { Text("Oyster Train") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             )
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp)
+            Modifier.fillMaxSize().padding(padding).padding(16.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Status indicator
+            // ── Status indicator ──
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(16.dp).background(
-                    if (uiState.isTrainingActive) Color(0xFF4CAF50) else Color(0xFF9E9E9E),
-                    CircleShape
-                ))
+                    if (ui.isTrainingActive) Color(0xFF4CAF50) else Color(0xFF9E9E9E), CircleShape))
                 Text(
-                    if (uiState.isTrainingActive) "Training Active" else "Idle",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
+                    if (ui.isTrainingActive) "Training Active" else "Idle",
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── Model selector chips ──
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ModelType.entries.forEach { model ->
+                    FilterChip(
+                        selected = ui.selectedModel == model,
+                        onClick = { viewModel.selectModel(model) },
+                        label = { Text(when (model) {
+                            ModelType.LEWM -> "LeWM"
+                            ModelType.QWEN -> "Qwen 0.5B"
+                            ModelType.BOTH -> "Both"
+                        }) },
+                        enabled = !ui.isTrainingActive,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── LeWM model card ──
+            if (ui.selectedModel == ModelType.LEWM || ui.selectedModel == ModelType.BOTH) {
+                ModelCard(
+                    title = "LeWM JEPA — World Model",
+                    subtitle = "Vision + action prediction | ${String.format("%.1f", ui.lewm.paramsM)}M params",
+                    ready = ui.lewm.ready,
+                    training = ui.lewm.training,
+                    status = ui.lewm,
+                    accentColor = Color(0xFF1565C0),
                 )
+                Spacer(Modifier.height(8.dp))
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            // Model info
-            if (uiState.modelTestPassed) {
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFE8F5E9))) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Model Ready", fontWeight = FontWeight.Bold,
-                            color = Color(0xFF2E7D32))
-                        Text("${uiState.modelName} | PyTorch ${uiState.torchVersion}",
-                            style = MaterialTheme.typography.bodySmall)
+            // ── Qwen model card ──
+            if (ui.selectedModel == ModelType.QWEN || ui.selectedModel == ModelType.BOTH) {
+                if (!ui.qwenDownloaded) {
+                    // Download prompt
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFFFF3E0))) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("Qwen2.5-0.5B — Not Downloaded", fontWeight = FontWeight.Bold)
+                            Text("~350MB GGUF model needed for on-device LLM",
+                                style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.height(8.dp))
+                            if (ui.qwenDownloading) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(ui.qwenDownloadProgress, style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Button(onClick = { viewModel.downloadQwen() },
+                                    shape = RoundedCornerShape(8.dp)) {
+                                    Text("Download Model")
+                                }
+                            }
+                        }
                     }
+                } else {
+                    ModelCard(
+                        title = "Qwen2.5-0.5B — Language Model",
+                        subtitle = "LoRA rank-8 fine-tuning | ${String.format("%.1f", ui.qwen.tokensPerSec)} tok/s",
+                        ready = ui.qwen.ready,
+                        training = ui.qwen.training,
+                        status = ui.qwen,
+                        accentColor = Color(0xFF6A1B9A),
+                    )
                 }
-            } else if (uiState.errorMessage.isNotEmpty()) {
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFFFEBEE))) {
-                    Text(uiState.errorMessage, Modifier.padding(16.dp), color = Color(0xFFC62828))
-                }
+                Spacer(Modifier.height(8.dp))
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            // Server address input
+            // ── Server + controls ──
             OutlinedTextField(
                 value = serverInput,
                 onValueChange = { serverInput = it },
                 label = { Text("Flower Server (ip:port)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                enabled = !uiState.isTrainingActive,
+                enabled = !ui.isTrainingActive,
             )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
-            // Start / Stop buttons
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val canStart = !ui.isTrainingActive && when (ui.selectedModel) {
+                    ModelType.LEWM -> ui.lewm.ready
+                    ModelType.QWEN -> ui.qwenDownloaded && ui.qwen.ready
+                    ModelType.BOTH -> ui.lewm.ready  // Qwen optional
+                }
                 Button(
                     onClick = { viewModel.startTraining(serverInput) },
-                    enabled = !uiState.isTrainingActive && uiState.modelTestPassed,
+                    enabled = canStart,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(8.dp),
                 ) { Text("Join Network") }
 
                 Button(
                     onClick = { viewModel.stopTraining() },
-                    enabled = uiState.isTrainingActive,
+                    enabled = ui.isTrainingActive,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     shape = RoundedCornerShape(8.dp),
                 ) { Text("Stop") }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(12.dp))
 
-            // Training stats
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("Training Statistics", fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium)
+            // ── Uptime + error ──
+            if (ui.isTrainingActive) {
+                Text("Uptime: ${ui.uptime}", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (ui.errorMessage.isNotEmpty()) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFFEBEE))) {
+                    Text(ui.errorMessage, Modifier.padding(12.dp), color = Color(0xFFC62828),
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
 
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        StatItem("Round", "${uiState.currentRound}/${uiState.totalRounds}")
-                        StatItem("Loss", String.format("%.4f", uiState.currentLoss))
-                        StatItem("Steps", "${uiState.localSteps}/${uiState.totalLocalSteps}")
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        StatItem("Params", "${uiState.paramsM}M")
-                        StatItem("Memory", "${uiState.memoryUsageMB}MB")
-                        StatItem("Uptime", uiState.uptime)
-                    }
+@Composable
+fun ModelCard(
+    title: String,
+    subtitle: String,
+    ready: Boolean,
+    training: Boolean,
+    status: ModelStatus,
+    accentColor: Color,
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (training) accentColor.copy(alpha = 0.08f)
+            else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(10.dp).background(
+                    when {
+                        training -> Color(0xFF4CAF50)
+                        ready -> accentColor
+                        else -> Color(0xFFFF9800)
+                    }, CircleShape))
+                Text(title, fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleSmall)
+            }
+            Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            if (training || status.round > 0) {
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    StatItem("Round", "${status.round}/${status.totalRounds}")
+                    StatItem("Loss", String.format("%.4f", status.loss))
+                    StatItem("Step", "${status.step}/${status.totalSteps}")
+                }
+                if (training && status.totalRounds > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { status.round.toFloat() / status.totalRounds },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        color = accentColor,
+                    )
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            // Connection status
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
-                containerColor = if (uiState.isConnectedToServer) Color(0xFFE8F5E9) else Color(0xFFFFF3E0))) {
-                Row(Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("Server", fontWeight = FontWeight.Bold)
-                        Text(uiState.serverAddress, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Box(Modifier.size(12.dp).background(
-                        if (uiState.isConnectedToServer) Color(0xFF4CAF50) else Color(0xFFFF9800),
-                        CircleShape
-                    ))
-                }
-            }
-
-            // Training progress bar
-            if (uiState.isTrainingActive && uiState.totalRounds > 0) {
-                Spacer(Modifier.height(16.dp))
-                LinearProgressIndicator(
-                    progress = { uiState.currentRound.toFloat() / uiState.totalRounds },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                )
+            if (status.error.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(status.error, color = Color(0xFFC62828),
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -164,7 +228,7 @@ fun TrainingScreen(viewModel: TrainingViewModel = viewModel()) {
 @Composable
 fun StatItem(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, style = MaterialTheme.typography.headlineSmall,
+        Text(value, style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text(label, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -26,6 +26,8 @@ android {
                 install("torchvision")
                 install("einops")
                 install("flwr")
+                install("llama-cpp-python")
+                install("huggingface-hub")
                 install("msgpack-python")
                 install("pyyaml")
                 install("pydantic")
